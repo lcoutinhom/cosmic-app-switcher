@@ -2,6 +2,7 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h"
 #include <wayland-client.h>
+#include <wayland-cursor.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -99,6 +100,9 @@ struct panel {
     struct wl_shm *shm;
     struct wl_seat *seat;
     struct wl_keyboard *keyboard;
+    struct wl_pointer *pointer;
+    struct wl_cursor_theme *cursor_theme;
+    struct wl_surface *cursor_surface;
     struct zwlr_layer_shell_v1 *shell;
     struct zwp_keyboard_shortcuts_inhibit_manager_v1 *inhibit_manager;
     struct zwp_keyboard_shortcuts_inhibitor_v1 *inhibitor;
@@ -108,6 +112,9 @@ struct panel {
     size_t count, selected;
     int width, height;
     bool done, confirmed, shift, configured, entered;
+    bool pointer_inside;
+    double pointer_x, pointer_y;
+    int pressed_item;
 };
 
 static void paint(struct panel *p)
@@ -190,6 +197,126 @@ static const struct wl_keyboard_listener keyboard_listener = {
     .key = key, .modifiers = modifiers,
 };
 
+/* The renderer uses fixed pages of seven icons. Hovering an icon never
+ * moves the page underneath the cursor; only explicit navigation does. */
+static int pointer_item(const struct panel *p)
+{
+    if (!p->pointer_inside || p->count == 0 || p->pointer_y < 24 ||
+        p->pointer_y >= 140 || p->pointer_x < 27) return -1;
+    int slot = (int)((p->pointer_x - 24) / 112);
+    if (slot < 0 || slot >= 7) return -1;
+    double local = p->pointer_x - (24 + slot * 112);
+    if (local < 3 || local >= 109) return -1;
+    size_t item = (p->selected / 7) * 7 + (size_t)slot;
+    return item < p->count ? (int)item : -1;
+}
+
+static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial,
+                          struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y)
+{
+    (void)surface;
+    struct panel *p = data;
+    p->pointer_inside = true;
+    p->pointer_x = wl_fixed_to_double(x);
+    p->pointer_y = wl_fixed_to_double(y);
+    p->pressed_item = -1;
+    /* Do not override the keyboard selection merely because the panel opens
+     * under a stationary cursor. The first actual motion enables hovering. */
+    if (p->cursor_theme && p->cursor_surface) {
+        struct wl_cursor *cursor = wl_cursor_theme_get_cursor(p->cursor_theme, "left_ptr");
+        if (cursor && cursor->image_count) {
+            struct wl_cursor_image *image = cursor->images[0];
+            struct wl_buffer *buffer = wl_cursor_image_get_buffer(image);
+            if (buffer) {
+                wl_surface_attach(p->cursor_surface, buffer, 0, 0);
+                wl_surface_damage(p->cursor_surface, 0, 0, image->width, image->height);
+                wl_surface_commit(p->cursor_surface);
+                wl_pointer_set_cursor(pointer, serial, p->cursor_surface,
+                                      image->hotspot_x, image->hotspot_y);
+            }
+        }
+    }
+}
+
+static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial,
+                          struct wl_surface *surface)
+{
+    (void)pointer; (void)serial; (void)surface;
+    struct panel *p = data;
+    p->pointer_inside = false;
+    p->pressed_item = -1;
+}
+
+static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,
+                           wl_fixed_t x, wl_fixed_t y)
+{
+    (void)pointer; (void)time;
+    struct panel *p = data;
+    if (p->done) return;
+    double next_x = wl_fixed_to_double(x), next_y = wl_fixed_to_double(y);
+    bool moved = next_x != p->pointer_x || next_y != p->pointer_y;
+    p->pointer_x = next_x; p->pointer_y = next_y;
+    int item = pointer_item(p);
+    if (moved && item >= 0 && p->selected != (size_t)item) {
+        p->selected = (size_t)item;
+        paint(p);
+    }
+}
+
+static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial,
+                           uint32_t time, uint32_t button, uint32_t state)
+{
+    (void)pointer; (void)serial; (void)time;
+    struct panel *p = data;
+    if (p->done || button != 0x110) return; /* Linux BTN_LEFT */
+    int item = pointer_item(p);
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        p->pressed_item = item;
+        if (item >= 0) {
+            p->selected = (size_t)item;
+            paint(p);
+        }
+    } else {
+        if (item >= 0 && p->pressed_item == item) {
+            p->selected = (size_t)item;
+            p->done = true; p->confirmed = true;
+        }
+        p->pressed_item = -1;
+    }
+}
+
+static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time,
+                         uint32_t axis, wl_fixed_t value)
+{
+    (void)pointer; (void)time; (void)axis;
+    struct panel *p = data;
+    if (value != 0) {
+        p->pressed_item = -1;
+        step(p, value < 0);
+    }
+}
+
+static const struct wl_pointer_listener pointer_listener = {
+    .enter = pointer_enter, .leave = pointer_leave, .motion = pointer_motion,
+    .button = pointer_button, .axis = pointer_axis,
+};
+
+static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t capabilities)
+{
+    struct panel *p = data;
+    if ((capabilities & WL_SEAT_CAPABILITY_POINTER) && !p->pointer) {
+        p->pointer = wl_seat_get_pointer(seat);
+        wl_pointer_add_listener(p->pointer, &pointer_listener, p);
+    } else if (!(capabilities & WL_SEAT_CAPABILITY_POINTER) && p->pointer) {
+        wl_pointer_destroy(p->pointer);
+        p->pointer = NULL;
+        p->pointer_inside = false;
+        p->pressed_item = -1;
+    }
+}
+
+static const struct wl_seat_listener seat_listener = {.capabilities = seat_capabilities};
+
 static void registry(void *data, struct wl_registry *registry, uint32_t name,
                      const char *interface, uint32_t version)
 {
@@ -199,8 +326,10 @@ static void registry(void *data, struct wl_registry *registry, uint32_t name,
         p->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 1);
     else if (strcmp(interface, "wl_shm") == 0)
         p->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
-    else if (strcmp(interface, "wl_seat") == 0 && p->seat == NULL)
+    else if (strcmp(interface, "wl_seat") == 0 && p->seat == NULL) {
         p->seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+        wl_seat_add_listener(p->seat, &seat_listener, p);
+    }
     else if (strcmp(interface, "zwlr_layer_shell_v1") == 0)
         p->shell = wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 1);
     else if (strcmp(interface, "zwp_keyboard_shortcuts_inhibit_manager_v1") == 0)
@@ -347,7 +476,8 @@ int switcher_show(const char **ids, size_t count, size_t selected)
 {
     if (count < 2 || count > 128 || selected >= count) return -1;
     struct panel p = {.count = count, .selected = selected,
-        .width = (int)(count < 7 ? count : 7) * 112 + 48, .height = 204};
+        .width = (int)(count < 7 ? count : 7) * 112 + 48, .height = 204,
+        .pressed_item = -1};
     p.display = wl_display_connect(NULL);
     if (!p.display) return -1;
     struct wl_registry *reg = wl_display_get_registry(p.display);
@@ -361,6 +491,8 @@ int switcher_show(const char **ids, size_t count, size_t selected)
     p.keyboard = wl_seat_get_keyboard(p.seat);
     wl_keyboard_add_listener(p.keyboard, &keyboard_listener, &p);
     p.surface = wl_compositor_create_surface(p.compositor);
+    p.cursor_theme = wl_cursor_theme_load(NULL, 24, p.shm);
+    if (p.cursor_theme) p.cursor_surface = wl_compositor_create_surface(p.compositor);
     p.layer = zwlr_layer_shell_v1_get_layer_surface(p.shell, p.surface, NULL,
         ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "cosmic-app-switcher");
     zwlr_layer_surface_v1_add_listener(p.layer, &layer_listener, &p);
@@ -407,6 +539,8 @@ int switcher_show(const char **ids, size_t count, size_t selected)
     zwlr_layer_surface_v1_destroy(p.layer);
     wl_surface_destroy(p.surface);
     wl_display_roundtrip(p.display);
+    if (p.cursor_surface) wl_surface_destroy(p.cursor_surface);
+    if (p.cursor_theme) wl_cursor_theme_destroy(p.cursor_theme);
     for (size_t i = 0; i < count; ++i) wl_buffer_destroy(p.buffers[i]);
     free(p.buffers);
     wl_display_disconnect(p.display);

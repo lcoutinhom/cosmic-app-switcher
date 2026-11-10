@@ -1,11 +1,71 @@
-/* Exercise keyboard state independently of a desktop or socket permissions. */
+/* Exercise input state independently of a desktop or socket permissions. */
 #include "../src/switcher.c"
 #include <assert.h>
 
 static struct panel panel(void)
 {
-    struct panel p = {.count = 3, .selected = 1};
+    struct panel p = {.count = 3, .selected = 1, .pressed_item = -1};
     return p;
+}
+
+static void mouse_selection(void)
+{
+    struct panel p = panel();
+    pointer_enter(&p, NULL, 0, NULL, wl_fixed_from_int(40), wl_fixed_from_int(60));
+    assert(p.selected == 1 && !p.done);
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(40), wl_fixed_from_int(60));
+    assert(p.selected == 1); /* A stationary cursor must not override Tab. */
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(50), wl_fixed_from_int(60));
+    assert(p.selected == 0 && !p.done && !p.confirmed);
+    key(&p, NULL, 0, 0, 56, WL_KEYBOARD_KEY_STATE_RELEASED);
+    assert(p.done && p.confirmed && p.selected == 0);
+
+    p = panel();
+    pointer_enter(&p, NULL, 0, NULL, wl_fixed_from_int(270), wl_fixed_from_int(60));
+    pointer_button(&p, NULL, 0, 0, 0x110, WL_POINTER_BUTTON_STATE_RELEASED);
+    assert(!p.done); /* A release without a matching press does not activate. */
+    pointer_button(&p, NULL, 0, 0, 0x111, WL_POINTER_BUTTON_STATE_PRESSED);
+    assert(!p.done && p.selected == 1);
+    pointer_button(&p, NULL, 0, 0, 0x110, WL_POINTER_BUTTON_STATE_PRESSED);
+    assert(p.selected == 2 && !p.done);
+    pointer_button(&p, NULL, 0, 0, 0x110, WL_POINTER_BUTTON_STATE_RELEASED);
+    assert(p.selected == 2 && p.done && p.confirmed);
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(40), wl_fixed_from_int(60));
+    assert(p.selected == 2); /* Completed choices cannot be changed. */
+
+    p = panel();
+    pointer_enter(&p, NULL, 0, NULL, wl_fixed_from_int(40), wl_fixed_from_int(60));
+    pointer_button(&p, NULL, 0, 0, 0x110, WL_POINTER_BUTTON_STATE_PRESSED);
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(270), wl_fixed_from_int(60));
+    pointer_button(&p, NULL, 0, 0, 0x110, WL_POINTER_BUTTON_STATE_RELEASED);
+    assert(!p.done); /* Dragging between icons is not a click. */
+    pointer_leave(&p, NULL, 0, NULL);
+    assert(!p.pointer_inside && pointer_item(&p) == -1 && !p.done);
+
+    p = panel();
+    p.count = 10; p.selected = 8;
+    pointer_enter(&p, NULL, 0, NULL, wl_fixed_from_int(40), wl_fixed_from_int(60));
+    assert(pointer_item(&p) == 7);
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(50), wl_fixed_from_int(60));
+    assert(p.selected == 7 && pointer_item(&p) == 7);
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(270), wl_fixed_from_int(60));
+    assert(p.selected == 9 && pointer_item(&p) == 9);
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(400), wl_fixed_from_int(60));
+    assert(p.selected == 9 && pointer_item(&p) == -1); /* Empty last-page slot. */
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(25), wl_fixed_from_int(60));
+    assert(pointer_item(&p) == -1); /* Left margin. */
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(134), wl_fixed_from_int(60));
+    assert(pointer_item(&p) == -1); /* Gap between cards. */
+    pointer_motion(&p, NULL, 0, wl_fixed_from_int(50), wl_fixed_from_int(170));
+    assert(pointer_item(&p) == -1); /* Footer. */
+    pointer_button(&p, NULL, 0, 0, 0x110, WL_POINTER_BUTTON_STATE_PRESSED);
+    pointer_button(&p, NULL, 0, 0, 0x110, WL_POINTER_BUTTON_STATE_RELEASED);
+    assert(!p.done);
+    pointer_axis(&p, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(1));
+    assert(p.selected == 0 && !p.done);
+    pointer_axis(&p, NULL, 0, WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(-1));
+    assert(p.selected == 9);
+    puts("Mouse input: hover, click, cancellation, stable pages, boundaries and scrolling passed.");
 }
 
 static void frame_cache(void)
@@ -70,6 +130,7 @@ static void frame_cache(void)
 
 int main(void)
 {
+    mouse_selection();
     struct panel p = panel();
     key(&p, NULL, 0, 0, 15, WL_KEYBOARD_KEY_STATE_PRESSED);
     assert(p.selected == 2 && !p.done && !p.confirmed);

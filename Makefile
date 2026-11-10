@@ -4,7 +4,7 @@ CPPFLAGS += -D_POSIX_C_SOURCE=200809L
 WARNINGS = -Wall -Wextra -Wpedantic -Werror
 BUILD_DIR = build
 WAYLAND_CFLAGS = $(shell pkg-config --cflags wayland-client)
-WAYLAND_LIBS = $(shell pkg-config --libs wayland-client)
+WAYLAND_LIBS = $(shell pkg-config --libs wayland-client wayland-cursor)
 PROTOCOL_NAMES = \
 	ext-foreign-toplevel-list-v1 \
 	ext-workspace-v1 \

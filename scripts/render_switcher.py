@@ -84,8 +84,8 @@ def render(output, width, height, ids, preview=False):
             ctx.set_line_width(1)
             ctx.stroke()
             visible = min(len(ids), 7)
-            start = min(max(0, selected - visible // 2), len(ids) - visible)
-            for slot, index in enumerate(range(start, start + visible)):
+            start = (selected // 7) * 7
+            for slot, index in enumerate(range(start, min(start + visible, len(ids)))):
                 x = 24 + slot * 112
                 if index == selected:
                     rounded(ctx, x + 3, 24, 106, 116, 14)
@@ -104,7 +104,7 @@ def render(output, width, height, ids, preview=False):
             name = entries[selected][0]
             label(ctx, f'{name}   ·   {selected + 1}/{len(ids)}', 24, 151,
                   width - 48, 11)
-            label(ctx, 'Solte Alt para abrir · Esc para cancelar', 24, 178,
+            label(ctx, 'Solte Alt ou clique para abrir · Esc cancela', 24, 178,
                   width - 48, 9, (0.63, 0.65, 0.70))
             surface.flush()
             if preview:

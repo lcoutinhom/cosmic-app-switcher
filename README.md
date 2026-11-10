@@ -16,12 +16,17 @@ pressionado e confirmação ao soltar a tecla.
 | Esc | Cancelar sem trocar de aplicativo |
 | Enter | Confirmar a seleção |
 | Setas esquerda/direita | Navegar no painel |
+| Mover o mouse sobre um ícone | Destacar o aplicativo sem ativá-lo |
+| Clique esquerdo em um ícone | Ativar o aplicativo selecionado |
+| Roda do mouse | Percorrer os aplicativos |
 | Alt+crase | Alternar entre janelas do aplicativo atual |
 | Alt+Shift+crase | Percorrer as janelas do aplicativo atual no sentido inverso |
 
 Várias janelas do mesmo aplicativo aparecem como uma única entrada.
-O painel exibe até sete ícones de cada vez e acompanha a seleção quando há mais
-aplicativos. Janelas minimizadas são restauradas ao serem escolhidas.
+O painel exibe páginas de até sete ícones. As posições ficam estáveis enquanto
+você escolhe com o mouse. Você pode mover o mouse para um ícone e soltar Alt,
+ou confirmar com um clique. Um cursor parado não altera a seleção ao abrir o
+painel. Janelas minimizadas são restauradas ao serem escolhidas.
 
 ## Requisitos
 
@@ -127,7 +132,7 @@ Para voltar ao painel visual, execute `bash ./install-visual.sh`.
 make test
 ```
 
-Os testes cobrem seleção por aplicativo, avanço/retorno, teclado do painel,
+Os testes cobrem seleção por aplicativo, avanço/retorno, teclado e mouse do painel,
 cache, compatibilidade da memória compartilhada, instalação, reinstalação,
 restauração e proteção contra remoção de arquivos modificados.
 

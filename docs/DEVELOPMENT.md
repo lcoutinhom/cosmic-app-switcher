@@ -5,12 +5,16 @@
 `cosmic-cycle-app --switcher` opens a centered native Wayland layer-shell
 overlay with one icon per distinct nonempty application ID. Tab advances,
 Shift+Tab goes backwards, releasing Alt activates the selection, and Esc
-cancels. Enter confirms; arrow keys navigate. Keyboard focus and shortcut
+cancels. Enter confirms; arrow keys navigate. Pointer motion highlights icons;
+a matching left-button press/release activates the icon. Releasing Alt also
+confirms a hovered selection. Initial pointer entry does not change selection
+until actual motion; the scroll wheel steps through apps. Keyboard focus and shortcut
 inhibition last only while the panel is open. Repeated shortcut invocations
 forward their direction to the existing panel via a private runtime socket.
 A 15-second safety timeout cancels without switching.
 
-The visible range scrolls beyond seven apps; at most 128 apps are supported.
+The visible range uses stable pages of seven apps, so hover does not move
+targets underneath the pointer; at most 128 apps are supported.
 Minimized targets are restored and closed targets are checked before activation.
 The physical keyboard handling targets the current US alt-intl layout.
 App order is the compositor's first-appearance order, not MRU history.
