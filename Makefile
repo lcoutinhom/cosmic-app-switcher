@@ -20,8 +20,20 @@ PROTOCOL_CODE = $(addprefix $(BUILD_DIR)/,$(addsuffix -protocol.c,$(PROTOCOL_NAM
 
 all: $(BUILD_DIR)/cosmic-cycle-app
 
-unit-test: $(BUILD_DIR)/test-selection
+unit-test: $(BUILD_DIR)/test-selection $(BUILD_DIR)/test-mru $(BUILD_DIR)/test-focus-state
 	$(BUILD_DIR)/test-selection
+	$(BUILD_DIR)/test-mru
+	$(BUILD_DIR)/test-focus-state
+
+$(BUILD_DIR)/test-mru: tests/test_mru.c src/mru.c src/mru.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -Isrc tests/test_mru.c src/mru.c -o $@
+
+$(BUILD_DIR)/test-focus-state: tests/test_focus_state.c src/main.c src/mru.c src/mru.h \
+		src/selection.c src/selection.h src/switcher.c src/switcher.h \
+		$(addprefix $(BUILD_DIR)/,$(addsuffix -client-protocol.h,$(PROTOCOL_NAMES))) $(PROTOCOL_CODE)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -Isrc -I$(BUILD_DIR) \
+		tests/test_focus_state.c src/mru.c src/selection.c src/switcher.c $(PROTOCOL_CODE) \
+		$(WAYLAND_LIBS) -o $@
 
 integration-test: all
 	bash tests/test_install.sh
@@ -84,11 +96,11 @@ $(BUILD_DIR)/%-client-protocol.h: $(BUILD_DIR)/%.xml
 $(BUILD_DIR)/%-protocol.c: $(BUILD_DIR)/%.xml
 	wayland-scanner private-code $< $@
 
-$(BUILD_DIR)/cosmic-cycle-app: src/main.c src/selection.c src/selection.h src/switcher.c src/switcher.h \
+$(BUILD_DIR)/cosmic-cycle-app: src/main.c src/selection.c src/selection.h src/switcher.c src/switcher.h src/mru.c src/mru.h \
 		$(addprefix $(BUILD_DIR)/,$(addsuffix -client-protocol.h,$(PROTOCOL_NAMES))) \
 		$(PROTOCOL_CODE)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) $(WAYLAND_CFLAGS) \
-		-Isrc -I$(BUILD_DIR) src/main.c src/selection.c src/switcher.c \
+		-Isrc -I$(BUILD_DIR) src/main.c src/selection.c src/switcher.c src/mru.c \
 		$(PROTOCOL_CODE) $(WAYLAND_LIBS) -o $@
 
 clean:

@@ -219,6 +219,10 @@ int main(void)
     char path[4096];
     snprintf(path, sizeof(path), "%s/cosmic-cycle-app/switcher.lock", runtime);
     unlink(path);
+    snprintf(path, sizeof(path), "%s/cosmic-cycle-app/frames.cache", runtime);
+    unlink(path);
+    snprintf(path, sizeof(path), "%s/cosmic-cycle-app/frames.previous", runtime);
+    unlink(path);
     snprintf(path, sizeof(path), "%s/cosmic-cycle-app", runtime);
     rmdir(path);
     rmdir(runtime);

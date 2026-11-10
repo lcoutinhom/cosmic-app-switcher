@@ -368,14 +368,14 @@ static uint64_t hash_bytes(uint64_t hash, const void *data, size_t size)
     return hash;
 }
 
-/* Keep one immutable pixel file in the private runtime directory. Reusing it
+/* Keep two immutable pixel files in the private runtime directory. Reusing them
  * skips Python/GTK startup entirely; atomic replacement leaves existing SHM
  * buffers valid. A trailer keys it to app order, dimensions and renderer. */
 static int prepare_frames(const char **ids, struct panel *p)
 {
     const char *runtime = getenv("XDG_RUNTIME_DIR"), *home = getenv("HOME");
     if (!runtime || !home) return -1;
-    char image[4096], cache[4096], script[4096], width[20], height[20];
+    char image[4096], cache[4096], previous[4096], script[4096], width[20], height[20];
     if (snprintf(image, sizeof(image), "%s/cosmic-cycle-app/frames.XXXXXX", runtime)
         >= (int)sizeof(image) ||
         snprintf(script, sizeof(script), "%s/.local/lib/cosmic-cycle-app/render_switcher.py", home)
@@ -389,6 +389,8 @@ static int prepare_frames(const char **ids, struct panel *p)
     }
     if (snprintf(cache, sizeof(cache), "%s/cosmic-cycle-app/frames.cache", runtime)
         >= (int)sizeof(cache)) return -1;
+    if (snprintf(previous, sizeof(previous), "%s/cosmic-cycle-app/frames.previous", runtime)
+        >= (int)sizeof(previous)) return -1;
     size_t pixels = (size_t)p->width * p->height * 4 * p->count;
     uint64_t hash = UINT64_C(14695981039346656037);
     hash = hash_bytes(hash, &p->width, sizeof(p->width));
@@ -408,8 +410,10 @@ static int prepare_frames(const char **ids, struct panel *p)
     }
     /* wl_shm servers map the pool PROT_READ | PROT_WRITE, even though we
      * never modify cached pixels. A read-only fd fails that shared mapping. */
-    int cached = open(cache, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
-    if (cached >= 0) {
+    const char *candidates[] = {cache, previous};
+    for (size_t slot = 0; slot < 2; ++slot) {
+        int cached = open(candidates[slot], O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+        if (cached < 0) continue;
         struct stat st;
         uint64_t stored;
         time_t now = time(NULL);
@@ -449,6 +453,7 @@ static int prepare_frames(const char **ids, struct panel *p)
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || fstat(fd, &st) != 0 ||
         st.st_size != (off_t)pixels) { close(fd); unlink(image); return -1; }
     if (pwrite(fd, &hash, sizeof(hash), (off_t)pixels) == sizeof(hash)) {
+        (void)rename(cache, previous);
         (void)rename(image, cache);
     }
     unlink(image);

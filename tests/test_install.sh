@@ -210,6 +210,7 @@ test_visual_install_lifecycle()
     [[ $(grep -c ' --switcher' "$CONFIG_FILE") -eq 2 ]] || fail 'missing visual shortcuts'
     assert_file "$helper_dir/render_switcher.py"
     assert_file "$helper_dir/show_app.py"
+    assert_contains "$XDG_CONFIG_HOME/autostart/cosmic-app-switcher-focus.desktop" '--track-focus'
     bash "$REPO_DIR/install-visual.sh"
     [[ $(grep -c ' --switcher' "$CONFIG_FILE") -eq 2 ]] || fail 'duplicated visual shortcuts'
     [[ $(grep -c 'dead_tilde' "$CONFIG_FILE") -eq 1 ]] || fail 'duplicated international shortcut'
@@ -227,6 +228,7 @@ test_visual_install_lifecycle()
     assert_not_contains "$CONFIG_FILE" ' --switcher'
     assert_contains "$helper_dir/render_switcher.py" 'original renderer'
     assert_missing "$helper_dir/show_app.py"
+    assert_missing "$XDG_CONFIG_HOME/autostart/cosmic-app-switcher-focus.desktop"
     assert_missing "$STATE_DIR"
     assert_missing "$XDG_STATE_HOME/cosmic-app-switcher"
 }

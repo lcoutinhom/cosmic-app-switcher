@@ -20,24 +20,43 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def destination(name):
+    if name == 'focus-tracker.desktop':
+        config = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config'))
+        return config / 'autostart/cosmic-app-switcher-focus.desktop'
+    if name not in ('render_switcher.py', 'show_app.py'):
+        raise ValueError(f'Unknown managed asset: {name}')
+    return locations()[1] / name
+
+
+def tracker_desktop():
+    binary = Path(os.environ.get('XDG_BIN_HOME', Path.home() / '.local/bin')) / 'cosmic-cycle-app'
+    quoted = '"' + str(binary).replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`') + '"'
+    return ('[Desktop Entry]\nType=Application\nName=COSMIC App Switcher Focus Tracker\n'
+            f'Exec={quoted} --track-focus\nOnlyShowIn=COSMIC;\nNoDisplay=true\n'
+            'Comment=Remember recently used applications for Alt+Tab\n')
+
+
 def install():
     state, library = locations()
     source = Path(__file__).resolve().parent
     manifest = state / 'assets.json'
     entries = json.loads(manifest.read_text()) if manifest.exists() else {}
-    for name in ('render_switcher.py', 'show_app.py'):
-        target = library / name
+    contents = {name: (source / name).read_text() for name in ('render_switcher.py', 'show_app.py')}
+    contents['focus-tracker.desktop'] = tracker_desktop()
+    for name in contents:
+        target = destination(name)
         if target.is_symlink() or (target.exists() and not target.is_file()):
             raise ValueError(f'Unsupported helper path: {target}')
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     library.mkdir(parents=True, exist_ok=True)
-    for name in ('render_switcher.py', 'show_app.py'):
-        target = library / name
+    for name, content in contents.items():
+        target = destination(name)
         if name not in entries:
             entries[name] = {'existed': target.exists()}
             if target.exists():
                 shutil.copy2(target, state / (name + '.original'))
-        atomic_write(target, (source / name).read_text(), 0o644)
+        atomic_write(target, content, 0o644)
         entries[name]['installed_hash'] = digest(target)
     atomic_write(manifest, json.dumps(entries, indent=2) + '\n', 0o600)
 
@@ -48,7 +67,7 @@ def verify(force=False):
     if not manifest.exists():
         return
     for name, entry in json.loads(manifest.read_text()).items():
-        target = library / name
+        target = destination(name)
         if not force and (target.is_symlink() or
                 (target.exists() and digest(target) != entry['installed_hash'])):
             raise ValueError(f'Helper changed: {target}; use --restore-backup to restore original files')
@@ -63,7 +82,7 @@ def remove(force=False):
     if not manifest.exists():
         return
     for name, entry in json.loads(manifest.read_text()).items():
-        target = library / name
+        target = destination(name)
         backup = state / (name + '.original')
         if entry['existed']:
             if target.is_symlink():

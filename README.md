@@ -28,6 +28,11 @@ você escolhe com o mouse. Você pode mover o mouse para um ícone e soltar Alt,
 ou confirmar com um clique. Um cursor parado não altera a seleção ao abrir o
 painel. Janelas minimizadas são restauradas ao serem escolhidas.
 
+A ordem do painel segue os **aplicativos usados mais recentemente**: o atual
+fica primeiro e um Alt+Tab rápido volta ao anterior. Pressionar novamente
+alterna entre os dois últimos. A ordem fica congelada enquanto o painel está
+aberto, para você percorrer a lista sem que os ícones mudem de lugar.
+
 ## Requisitos
 
 - COSMIC Desktop em Wayland; desenvolvido e usado no Pop!_OS 24.04.
@@ -64,12 +69,22 @@ de origem. Os arquivos instalados são:
 | `~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom` | Bloco de atalhos |
 | `~/.local/state/cosmic-cycle-app/` | Backup dos atalhos/binário e checksum |
 | `~/.local/state/cosmic-app-switcher/` | Backup dos auxiliares visuais |
+| `~/.config/autostart/cosmic-app-switcher-focus.desktop` | Monitor de foco no início da sessão |
 
 Os caminhos de binário, configuração e estado respeitam `XDG_BIN_HOME`,
 `XDG_CONFIG_HOME` e `XDG_STATE_HOME`. Os auxiliares Python usam o diretório
 `~/.local/lib/cosmic-cycle-app/`. A instalação não altera os demais atalhos.
 Para layouts US internacional, o instalador adapta a tecla de crase para
 `dead_grave`/`dead_tilde`.
+
+Um monitor leve registra as mudanças reais de foco, incluindo cliques e
+Alt+crase. Ele inicia no login ou no primeiro uso do Alt+Tab, sem root ou
+serviço de sistema. O histórico contém apenas identificadores de aplicativos
+na sessão atual, dentro de `$XDG_RUNTIME_DIR`, e não grava títulos ou teclas.
+Eventos de notificação sem ativação não mudam a ordem. O histórico anterior à
+primeira execução não pode ser reconstruído; aplicativos ainda não observados
+ficam no fim da lista. Ao sair da sessão, o monitor encerra e o histórico é
+descartado com o diretório de runtime.
 
 ## Desinstalação
 
@@ -116,9 +131,10 @@ Para voltar ao painel visual, execute `bash ./install-visual.sh`.
 
 - O painel reutiliza as imagens por até cinco minutos quando a lista e a ordem
   dos aplicativos não mudam, evitando iniciar Python/GTK a cada abertura.
+  As duas últimas ordens ficam em cache para a alternância rápida entre apps.
 - A primeira abertura e mudanças de aplicativos podem levar mais tempo.
-- A ordem segue a primeira aparição fornecida pelo compositor, não um histórico
-  dos aplicativos usados mais recentemente.
+- O painel usa o histórico recente de foco. O modo legado `--apps`, sem painel,
+  mantém a ordem original fornecida pelo compositor.
 - Agrupamento depende do `app_id`: aplicativos com o mesmo identificador
   aparecem juntos.
 - A navegação por teclado foi desenvolvida com o layout US internacional.

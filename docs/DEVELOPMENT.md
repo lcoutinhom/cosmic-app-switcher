@@ -17,7 +17,14 @@ The visible range uses stable pages of seven apps, so hover does not move
 targets underneath the pointer; at most 128 apps are supported.
 Minimized targets are restored and closed targets are checked before activation.
 The physical keyboard handling targets the current US alt-intl layout.
-App order is the compositor's first-appearance order, not MRU history.
+Visual mode orders apps by most recent actual focus. The `--track-focus`
+process observes COSMIC activation-state transitions and stores a bounded
+session-only app-ID history in the private runtime directory. It starts through
+XDG autostart or lazily on the first visual invocation. It never activates a
+window itself, and repeated state updates or notification-only events do not
+change history. A lock prevents multiple trackers. Uninstalling/replacing the
+binary stops the old tracker within two seconds; a later invocation starts it
+again. Panel navigation uses a fixed snapshot until confirmation or cancel.
 This resembles GNOME's interaction without its window previews or animations.
 
 Rendering uses system desktop icons via PyGObject GTK3/Gio and Python Cairo.

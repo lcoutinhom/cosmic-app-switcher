@@ -105,6 +105,12 @@ static void frame_cache(void)
     int next = prepare_frames(ids, &p);
     assert(next >= 0 && fstat(next, &changed) == 0);
     assert(initial.st_ino != changed.st_ino);
+    /* MRU alternates the two leading apps; both recent orders stay warm. */
+    ids[0] = "firefox";
+    int back = prepare_frames(ids, &p);
+    assert(back >= 0 && fstat(back, &hit) == 0 && hit.st_ino == initial.st_ino);
+    close(back);
+    ids[0] = "other.app";
     /* Old compositor buffers retain their original backing file. */
     assert(fstat(first, &hit) == 0 && hit.st_size == initial.st_size);
     close(next);
@@ -124,6 +130,8 @@ static void frame_cache(void)
     assert(refreshed >= 0 && fstat(refreshed, &changed) == 0);
     assert(hit.st_ino != changed.st_ino);
     close(refreshed); close(next); close(first);
+    unlink(cache);
+    snprintf(cache, sizeof(cache), "%s/cosmic-cycle-app/frames.previous", temp);
     unlink(cache); rmdir(directory); rmdir(temp);
     puts("Frame cache: reuse, app/dimension changes, corruption, expiry and immutable buffers passed.");
 }

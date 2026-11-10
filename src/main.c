@@ -1,5 +1,6 @@
 #include "selection.h"
 #include "switcher.h"
+#include "mru.h"
 
 #include "cosmic-toplevel-info-unstable-v1-client-protocol.h"
 #include "cosmic-toplevel-management-unstable-v1-client-protocol.h"
@@ -11,8 +12,12 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/stat.h>
 #include <wayland-client.h>
 
+struct app;
 struct window {
     struct zcosmic_toplevel_handle_v1 *cosmic;
     char *app_id;
@@ -21,6 +26,8 @@ struct window {
     bool minimized;
     bool closed;
     struct window *next;
+    struct app *app;
+    bool focus_pending;
 };
 
 struct app {
@@ -37,6 +44,8 @@ struct app {
     uint32_t toplevel_manager_version;
     uint32_t seat_name;
     uint32_t seat_version;
+    bool tracking;
+    struct mru_history history;
 };
 
 static void replace_string(char **destination, const char *value)
@@ -52,14 +61,30 @@ static void replace_string(char **destination, const char *value)
 
 static void cosmic_closed(void *data, struct zcosmic_toplevel_handle_v1 *handle)
 {
-    (void)handle;
-    ((struct window *)data)->closed = true;
+    struct window *w = data;
+    w->closed = true;
+    if (w->app && w->app->tracking) {
+        struct window **link = &w->app->windows;
+        while (*link && *link != w) link = &(*link)->next;
+        if (*link) {
+            *link = w->next;
+            if (!w->next) w->app->windows_tail = link;
+        }
+        zcosmic_toplevel_handle_v1_destroy(handle);
+        free(w->app_id); free(w->title); free(w);
+    }
 }
 
 static void cosmic_done(void *data, struct zcosmic_toplevel_handle_v1 *handle)
 {
-    (void)data;
     (void)handle;
+    struct window *w = data;
+    if (w->app && w->app->tracking && w->active && w->focus_pending &&
+        w->app_id && w->app_id[0]) {
+        w->focus_pending = false;
+        if (mru_touch(&w->app->history, w->app_id))
+            (void)mru_save(&w->app->history);
+    }
 }
 
 static void cosmic_title(void *data,
@@ -124,6 +149,7 @@ static void cosmic_state(void *data,
     uint32_t *state;
     (void)handle;
 
+    bool was_active = window->active;
     window->active = false;
     window->minimized = false;
     wl_array_for_each(state, states)
@@ -134,6 +160,8 @@ static void cosmic_state(void *data,
             window->minimized = true;
         }
     }
+    if (window->active && !was_active) window->focus_pending = true;
+    if (!window->active) window->focus_pending = false;
 }
 
 static void cosmic_geometry(void *data,
@@ -202,6 +230,7 @@ static void info_toplevel(void *data,
     }
 
     window->cosmic = handle;
+    window->app = app;
     zcosmic_toplevel_handle_v1_add_listener(
         window->cosmic, &cosmic_listener, window);
 
@@ -369,33 +398,116 @@ static struct window *choose_window(struct app *app, bool reverse, bool apps)
     return window;
 }
 
-static struct window *choose_app_panel(struct app *app, bool reverse)
+static struct window *choose_app_panel(struct app *app, bool reverse, bool dry_run)
 {
     size_t total = window_count(app), count = 0;
     if (total == 0) return NULL;
     const char **ids = calloc(total, sizeof(*ids));
     struct window **windows = calloc(total, sizeof(*windows));
     if (!ids || !windows) { free(ids); free(windows); return NULL; }
-    struct window *initial = choose_window(app, reverse, true);
-    size_t selected = 0;
+    const char *active_id = NULL;
     for (struct window *w = app->windows; w != NULL; w = w->next) {
         if (w->closed || !w->app_id || !w->app_id[0]) continue;
+        if (w->active) active_id = w->app_id;
         bool duplicate = false;
         for (size_t i = 0; i < count; ++i)
             if (strcmp(ids[i], w->app_id) == 0) duplicate = true;
         if (duplicate) continue;
         ids[count] = w->app_id;
         windows[count] = w;
-        if (w == initial) selected = count;
         ++count;
     }
-    int choice = count > 1 ? switcher_show(ids, count, selected) : -1;
+    struct mru_history history = {0};
+    mru_load(&history);
+    /* Correct a possible tracker-event race using the current snapshot. */
+    if (active_id) (void)mru_touch(&history, active_id);
+    size_t *order = calloc(count ? count : 1, sizeof(*order));
+    struct window **sorted = calloc(count ? count : 1, sizeof(*sorted));
+    const char **sorted_ids = calloc(count ? count : 1, sizeof(*sorted_ids));
+    if (!order || !sorted || !sorted_ids) {
+        free(order); free(sorted); free(sorted_ids); free(ids); free(windows);
+        mru_clear(&history);
+        return NULL;
+    }
+    mru_sort(&history, ids, count, order);
+    for (size_t i = 0; i < count; ++i) {
+        sorted[i] = windows[order[i]];
+        sorted_ids[i] = ids[order[i]];
+    }
+    free(order); free(ids); free(windows);
+    ids = sorted_ids; windows = sorted;
+    mru_clear(&history);
+    size_t selected = count > 1 && active_id ? (reverse ? count - 1 : 1) : 0;
+    int choice = count > 1 ? (dry_run ? (int)selected : switcher_show(ids, count, selected)) : -1;
     struct window *target = choice >= 0 ? windows[choice] : NULL;
     free(ids); free(windows);
     /* The target may have closed while the chooser was open. */
     if (wl_display_roundtrip(app->display) < 0 || (target && target->closed))
         return NULL;
     return target;
+}
+
+static int track_focus(struct app *app)
+{
+    int lock = mru_tracker_lock();
+    if (lock < 0) return EXIT_SUCCESS; /* Already running for this session. */
+    app->tracking = true;
+    mru_load(&app->history);
+    if (collect_windows(app) < 0) { close(lock); return EXIT_FAILURE; }
+    char executable[4096];
+    ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
+    if (length < 0) { close(lock); return EXIT_FAILURE; }
+    executable[length] = '\0';
+    struct stat running;
+    if (stat("/proc/self/exe", &running) != 0) { close(lock); return EXIT_FAILURE; }
+    for (;;) {
+        struct stat current;
+        /* Exit after uninstall/upgrade; the next invocation starts new code. */
+        if (stat(executable, &current) != 0 || current.st_ino != running.st_ino ||
+            current.st_dev != running.st_dev) break;
+        int prepared;
+        bool failed = false;
+        while ((prepared = wl_display_prepare_read(app->display)) != 0) {
+            if (wl_display_dispatch_pending(app->display) < 0) { failed = true; break; }
+        }
+        if (failed) break;
+        wl_display_flush(app->display);
+        struct pollfd fd = {.fd = wl_display_get_fd(app->display), .events = POLLIN};
+        int ready = poll(&fd, 1, 2000);
+        if (ready > 0 && (fd.revents & POLLIN)) {
+            if (wl_display_read_events(app->display) < 0 ||
+                wl_display_dispatch_pending(app->display) < 0) break;
+        } else {
+            wl_display_cancel_read(app->display);
+        }
+        if (fd.revents & (POLLERR | POLLHUP)) break;
+    }
+    mru_clear(&app->history);
+    wl_display_disconnect(app->display);
+    close(lock);
+    return EXIT_SUCCESS;
+}
+
+static void ensure_focus_tracker(void)
+{
+    int lock = mru_tracker_lock();
+    if (lock < 0) return;
+    close(lock);
+    pid_t child = fork();
+    if (child == 0) {
+        if (fork() == 0) {
+            (void)setsid();
+            int null_fd = open("/dev/null", O_RDWR);
+            if (null_fd >= 0) {
+                dup2(null_fd, STDIN_FILENO); dup2(null_fd, STDOUT_FILENO);
+                dup2(null_fd, STDERR_FILENO);
+                if (null_fd > STDERR_FILENO) close(null_fd);
+            }
+            execl("/proc/self/exe", "cosmic-cycle-app", "--track-focus", (char *)NULL);
+        }
+        _exit(0);
+    }
+    if (child > 0) (void)waitpid(child, NULL, 0);
 }
 
 static void show_app_indicator(const struct window *target)
@@ -446,6 +558,7 @@ int main(int argc, char **argv)
     bool apps = false;
     bool dry_run = false;
     bool switcher = false;
+    bool tracker = false;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--reverse") == 0) {
@@ -457,17 +570,20 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--switcher") == 0) {
             switcher = true;
             apps = true;
+        } else if (strcmp(argv[i], "--track-focus") == 0) {
+            tracker = true;
         } else if (strcmp(argv[i], "--dry-run") == 0) {
             dry_run = true;
         } else if (strcmp(argv[i], "--help") == 0) {
-            printf("usage: %s [--apps | --switcher] [--reverse] [--list] [--dry-run]\n", argv[0]);
+            printf("usage: %s [--apps | --switcher | --track-focus] [--reverse] [--list] [--dry-run]\n", argv[0]);
             return EXIT_SUCCESS;
         } else {
-            fprintf(stderr, "usage: %s [--apps | --switcher] [--reverse] [--list] [--dry-run]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--apps | --switcher | --track-focus] [--reverse] [--list] [--dry-run]\n", argv[0]);
             return EXIT_FAILURE;
         }
     }
 
+    if (tracker) return track_focus(&app);
     if (switcher && !list_only && !dry_run) {
         int started = switcher_begin(reverse);
         if (started == 0) return EXIT_SUCCESS;
@@ -475,6 +591,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "cosmic-cycle-app: cannot start application switcher\n");
             return EXIT_FAILURE;
         }
+        ensure_focus_tracker();
     }
     if (collect_windows(&app) < 0) {
         return EXIT_FAILURE;
@@ -484,8 +601,8 @@ int main(int argc, char **argv)
         return EXIT_SUCCESS;
     }
 
-    target = switcher && !dry_run ? choose_app_panel(&app, reverse)
-                                 : choose_window(&app, reverse, apps);
+    target = switcher ? choose_app_panel(&app, reverse, dry_run)
+                      : choose_window(&app, reverse, apps);
     if (target == NULL) {
         return EXIT_SUCCESS;
     }
