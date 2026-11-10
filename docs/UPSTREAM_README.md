@@ -1,3 +1,9 @@
+# Archived upstream README
+
+This document describes the original Cosmic Cycle App helper. For installation
+and usage of this fork, see the [current README](../README.md). Local links
+below have been adjusted for this archive's location.
+
 # Cosmic Cycle App
 
 A small Wayland-native shortcut helper that runs without root privileges and
@@ -129,8 +135,8 @@ At build time, `wayland-scanner` generates C client bindings from five
 official protocol XML files stored under `vendor/`. This keeps fresh clones
 self-contained and avoids downloading another source repository during
 installation. Origins, revisions, and licenses are recorded in
-[VENDORED_SOURCES.md](VENDORED_SOURCES.md), with further technical references
-in [docs/REFERENCES.md](docs/REFERENCES.md).
+[VENDORED_SOURCES.md](../VENDORED_SOURCES.md), with further technical references
+in [docs/REFERENCES.md](REFERENCES.md).
 
 ## Build and test
 
@@ -162,6 +168,6 @@ To inspect the windows visible to the helper without changing focus:
 ## License
 
 The project's source code is licensed under the MIT License; see
-[LICENSE](LICENSE).
+[LICENSE](../LICENSE).
 Vendored protocol files retain the copyright and permission notices embedded
 in their respective XML files.
